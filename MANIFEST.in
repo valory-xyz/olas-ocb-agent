@@ -1,0 +1,9 @@
+# The sdist ships the package, its README, LICENSE and SECURITY.md, and install.sh; dev-only files stay in the repo.
+include README.md LICENSE SECURITY.md install.sh
+prune tests
+prune docs
+prune quint
+prune scripts
+prune .github
+exclude CONTRIBUTING.md .gitignore
+global-exclude *.py[cod] __pycache__

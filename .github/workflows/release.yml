@@ -1,0 +1,106 @@
+name: release
+# Builds the package at a given commit, checks it, and (only when asked) uploads it to PyPI. Run it by hand: first with
+# upload off (a dry run), then with upload on.
+#
+# The version is the one in pyproject.toml at `ref`; `version`, if given, must match it. The code digest of the
+# installed wheel (every .py and .json in the olas_ocb_agent package, as OnchainBench's `freeze --agent-check`
+# computes it) is always printed; when `digest` is given (a release of a frozen, benchmarked agent), it must match.
+on:
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: the commit, tag or branch to build
+        required: true
+        default: main
+      version:
+        description: the version the build must have (empty = whatever pyproject.toml says)
+        required: false
+        default: ''
+      digest:
+        description: the frozen code digest the wheel must have (empty = print it, don't check)
+        required: false
+        default: ''
+      upload:
+        description: upload to PyPI (off = build and check only)
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.ref }}
+      - uses: astral-sh/setup-uv@v10.3.3
+      - name: the version
+        id: version
+        env:
+          ASKED: ${{ inputs.version }}
+        run: |
+          VERSION=$(python3 -I -c 'import tomllib; print(tomllib.load(open("pyproject.toml", "rb"))["project"]["version"])')
+          echo "pyproject.toml: $VERSION"
+          if [ -n "$ASKED" ] && [ "$ASKED" != "$VERSION" ]; then
+            echo "::error::pyproject.toml has $VERSION, not the asked $ASKED"; exit 1
+          fi
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+      - name: not already on PyPI
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          code=$(curl -s -o /dev/null -w '%{http_code}' "https://pypi.org/pypi/olas-ocb-agent/$VERSION/json")
+          if [ "$code" = 200 ]; then echo "::error::olas-ocb-agent $VERSION is already on PyPI"; exit 1; fi
+      - name: build the sdist and the wheel
+        run: uv build --out-dir dist
+      - name: twine check
+        run: uvx twine check --strict dist/*
+      - name: the files carry the version
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          ls dist
+          test -f "dist/olas_ocb_agent-${VERSION}-py3-none-any.whl"
+          test -f "dist/olas_ocb_agent-${VERSION}.tar.gz"
+      - name: the wheel's code digest (checked when one is given)
+        env:
+          DIGEST: ${{ inputs.digest }}
+        run: |
+          unzip -q dist/*.whl -d /tmp/wheel
+          python3 -I - /tmp/wheel <<'EOF'
+          import hashlib, json, os, sys
+          from pathlib import Path
+
+          root = Path(sys.argv[1]) / "olas_ocb_agent"
+          files = {
+              p.relative_to(root).as_posix(): hashlib.sha256(p.read_bytes()).hexdigest()
+              for p in sorted([*root.rglob("*.py"), *root.rglob("*.json")])
+              if "__pycache__" not in p.parts
+          }
+          got = hashlib.sha256(json.dumps(files, sort_keys=True).encode()).hexdigest()
+          print(f"{len(files)} files, digest {got}")
+          want = os.environ["DIGEST"]
+          if want and got != want:
+              sys.exit(f"digest {got} is not the frozen {want}")
+          EOF
+      - name: the wheel installs as documented and its CLI reports the version
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          uv venv /tmp/venv -p 3.12
+          WHEEL=$(ls dist/*.whl)
+          VIRTUAL_ENV=/tmp/venv uv pip install "olas-ocb-agent[facilitator] @ file://$PWD/$WHEEL"
+          /tmp/venv/bin/ocb-agent --version | tee /tmp/version.txt
+          grep -q "$VERSION" /tmp/version.txt
+      - name: upload to PyPI
+        if: ${{ inputs.upload }}
+        env:
+          TWINE_USERNAME: __token__
+          TWINE_PASSWORD: ${{ secrets.PYPI_API_TOKEN }}
+        run: uvx twine upload --non-interactive dist/*

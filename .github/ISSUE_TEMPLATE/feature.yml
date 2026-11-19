@@ -1,0 +1,14 @@
+name: Feature or change
+description: Something the agent should do, or do differently
+labels: ["enhancement"]
+body:
+  - type: textarea
+    id: problem
+    attributes: {label: The problem, description: "What it solves for someone running the agent"}
+    validations: {required: true}
+  - type: textarea
+    id: done
+    attributes: {label: How we'd know it works}
+  - type: textarea
+    id: minimal
+    attributes: {label: Why it belongs in a minimal harness}

@@ -1,0 +1,39 @@
+name: close outside PRs
+# Contributions are issues only (CONTRIBUTING.md): a PR from anyone outside Valory is closed with a pointer.
+# pull_request_target runs with a token that can close the PR; it never checks out or runs the PR's code.
+on:
+  pull_request_target:
+    types: [opened, reopened]
+permissions:
+  pull-requests: write
+jobs:
+  close:
+    # members and collaborators, plus Valory's coding-agent account (it is neither)
+    if: >-
+      ${{ !contains(fromJSON('["OWNER", "MEMBER", "COLLABORATOR"]'), github.event.pull_request.author_association)
+      && !contains(fromJSON('["valory-coding-agent"]'), github.event.pull_request.user.login) }}
+    runs-on: ubuntu-latest
+    steps:
+      - env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          AUTHOR: ${{ github.event.pull_request.user.login }}
+          PR: ${{ github.event.pull_request.html_url }}
+        run: |
+          # author_association misses Valory staff whose org membership is private (it reports CONTRIBUTOR),
+          # so ask for the author's permission on this repo: write or above is Valory
+          perm=$(gh api "repos/$REPO/collaborators/$AUTHOR/permission" --jq .permission 2>/dev/null || echo none)
+          case "$perm" in
+            admin|maintain|write) echo "$AUTHOR has $perm access: not an outside PR"; exit 0 ;;
+          esac
+          gh pr close "$PR" --comment "Thanks for this. olas-ocb-agent takes contributions as issues only, because Valory develops it with AI agents, which can usually turn a clear issue into a tested change faster than an outside PR can be reviewed. Please open an issue describing the problem or the change, and link this PR there as a reference if it helps. See CONTRIBUTING.md. To build your own version, fork the repo (Apache-2.0)."
+  all-checks-passed:  # the single required status check (Valory's repo policy)
+    name: All checks passed
+    if: always()
+    needs: [close]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Fail if any required job failed or was cancelled
+        if: ${{ contains(needs.*.result, 'failure') || contains(needs.*.result, 'cancelled') }}
+        run: exit 1
+      - run: echo "All required checks passed."

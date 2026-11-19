@@ -1,0 +1,4 @@
+{
+ "about": "Skill files olas-ocb-agent always treats as instructions (SHA-256 of each SKILL.md). Empty on purpose: Pearl and Connect launch the agent with --trusted-skill-hash for each skill they ship, and users approve their own with ocb-agent --trust-skill.",
+ "sha256": []
+}
